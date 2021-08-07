@@ -108,18 +108,6 @@ static void *insert_thread(void *arg)
     return NULL;
 }
 
-void print_list(list_t *list)
-{
-    puts("==================================");
-    list_node_t *cur = list->head;
-    while (cur->next != list->tail) {
-        list_node_t *next = cur->next;
-        printf("%lu\n", next->key);
-        cur = next;
-    }
-    puts("==================================");
-}
-
 #define N_THREADS 1
 
 int main() {
