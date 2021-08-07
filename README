@@ -5,6 +5,7 @@ list1.c         Mutex-lock protected list0
 list2.c         Lock-free insertion with CAS
 list3.c         list0 + deletion
 list4.c         Mutex-lock protected list3
+list5.c         Lock-free deletion with CAS and pointer marking
 
 What you can do
 ===============
