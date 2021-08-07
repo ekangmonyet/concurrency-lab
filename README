@@ -3,6 +3,8 @@ Table of Contents
 list0.c         Single-threaded strictly-ordered linked list implementation
 list1.c         Mutex-lock protected list0
 list2.c         Lock-free insertion with CAS
+list3.c         list0 + deletion
+list4.c         Mutex-lock protected list3
 
 What you can do
 ===============
