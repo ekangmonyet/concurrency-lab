@@ -98,7 +98,7 @@ static inline int tid(void)
     return tid_v;
 }
 
-#define N_ELEMENTS 1280
+#define N_ELEMENTS 128
 
 static uintptr_t elements[MAX_THREADS + 1][N_ELEMENTS];
 
@@ -110,18 +110,6 @@ static void *insert_thread(void *arg)
         list_insert(list, (uintptr_t) &elements[tid()][i]);
 
     return NULL;
-}
-
-void print_list(list_t *list)
-{
-    puts("==================================");
-    list_node_t *cur = list->head;
-    while (cur->next != list->tail) {
-        list_node_t *next = cur->next;
-        printf("%lu\n", next->key);
-        cur = next;
-    }
-    puts("==================================");
 }
 
 #define N_THREADS 128
