@@ -1,2 +1,16 @@
+Table of Contents
+=================
 list0.c         Single-threaded strictly-ordered linked list implementation
 list1.c         Mutex-lock protected list0
+list2.c         Lock-free insertion with CAS
+
+What you can do
+===============
+
+Build a list program:
+
+    make list<num>
+
+Check how the improvements are done:
+
+    diff list<num_old>.c list<num_new>.c
