@@ -57,7 +57,8 @@ try_again:
         next = (list_node_t *) atomic_load(&get_unmarked_node(curr)->next);
 
         if (!(get_unmarked_node(curr)->key < *key)) {
-            if (is_marked(atomic_load(&curr->next))) {
+            if (is_marked(atomic_load(&curr->next)) ||
+                is_marked(&((list_node_t *) atomic_load(prev))->next)) {
                 STOP_IF_WEAK();
                 // TEXTBOOK
                 goto try_again;
@@ -179,16 +180,23 @@ int main () {
     list_insert_unsafe(list, 500);
     list_insert_unsafe(list, 400);
 
-    // CASE 1: Distinct delete, expected: t2 can mark 400 too
+    /*
+     * CASE 1: Distinct delete (200, 400)
+     *  Expected: both can be deleted concurrently
+     *
+     * CASE 2: Consecutive delete (200, 300)
+     *  Expected: t2 should retry find until 200 is deleted
+     */
     list_print(list, "init");
 
     state_t *t1 = _list_delete_step1(list, 200, "t1");
     _list_delete_step2(t1);
-    state_t *t2 = _list_delete_step1(list, 400, "t2");
-    _list_delete_step2(t2);
+    state_t *t2 = _list_delete_step1(list, 300, "t2");
 
     list_print(list, "marked");
     _list_delete_step3(t1);
+    _list_delete_step2(t2);
+    _list_delete_step2(t2);
     _list_delete_step3(t2);
 
     list_print(list, "deleted");
