@@ -7,8 +7,16 @@
 #include <pthread.h>
 #include <threads.h>
 
+static atomic_int_fast32_t deleted = ATOMIC_VAR_INIT(0);
+
 #define TID_UNKNOWN -1
 #define MAX_THREADS 128
+
+#define is_marked(p)            (bool) ((uintptr_t)(p) &0x01)
+#define get_marked(p)           ((uintptr_t)(p) | (0x01))
+#define get_marked_node(p)      ((list_node_t *) get_marked(p))
+#define get_unmarked(p)         ((uintptr_t)(p) & (~0x01))
+#define get_unmarked_node(p)    ((list_node_t *) get_unmarked(p))
 
 typedef struct {
     atomic_uintptr_t    next;
@@ -48,39 +56,40 @@ try_again:
     prev = &list->head;
     curr = (list_node_t *) atomic_load(prev);
 
-    if (curr != (list_node_t *) atomic_load(prev))
+    if (atomic_load(prev) != get_unmarked(curr)) {
         goto try_again;
-
-    while (true) {
-        if (!curr)
-            return false;
-
-        next = (list_node_t *) atomic_load(&curr->next);
-
-        if (curr != (list_node_t*) atomic_load(prev))
-            goto try_again;
-
-        if (!(curr->key < *key)) {
-            *par_curr = curr;
-            *par_prev = prev;
-            *par_next = next;
-
-            return (curr->key == *key);
-        }
-
-        prev = &curr->next;
-
-        curr = next;
-
-        if (next == (list_node_t *) atomic_load(&list->tail))
-            break;
     }
 
-    *par_curr = curr;
-    *par_prev = prev;
-    *par_next = next;
+    while (true) {
+        next = (list_node_t *) atomic_load(&get_unmarked_node(curr)->next);
 
-    return false;
+        if (atomic_load(&get_unmarked_node(curr)->next) != (uintptr_t) next) {
+            goto try_again;
+        }
+        if (atomic_load(prev) != get_unmarked(curr)) {
+            goto try_again;
+        }
+
+        if (get_unmarked_node(next) == next) {
+            if (!(get_unmarked_node(curr)->key < *key)) {
+                *par_curr = curr;
+                *par_prev = prev;
+                *par_next = next;
+                return (get_unmarked_node(curr)->key == *key);
+            }
+            prev = &get_unmarked_node(curr)->next;
+
+        } else {
+            //TODO: what if we don't do this?
+            uintptr_t tmp = get_unmarked(curr);
+            if (!atomic_compare_exchange_strong(prev, &tmp,
+                                                get_unmarked(next))) {
+                goto try_again;
+            }
+
+        }
+        curr = next;
+    }
 }
 
 static bool list_insert(list_t *list, uintptr_t key)
@@ -98,7 +107,7 @@ static bool list_insert(list_t *list, uintptr_t key)
 
         atomic_store_explicit(&new->next, (uintptr_t) curr,
                               memory_order_relaxed);
-        uintptr_t tmp = (uintptr_t) curr;
+        uintptr_t tmp = get_unmarked(curr);
         if (atomic_compare_exchange_strong(prev, &tmp, (uintptr_t) new)) {
             return true;
         }
@@ -114,9 +123,18 @@ static bool list_delete(list_t *list, uintptr_t key)
         if (!__list_find(list, &key, &prev, &curr, &next)) {
             return false;
         }
-        uintptr_t tmp = (uintptr_t) curr;
 
-        atomic_compare_exchange_strong(prev, &tmp, (uintptr_t) next);
+        uintptr_t tmp = get_unmarked(next);
+
+        if (!atomic_compare_exchange_strong(&curr->next, &tmp,
+                                            get_marked(next))) {
+            continue;
+        }
+
+        tmp = get_unmarked(curr);
+
+        atomic_compare_exchange_strong(prev, &tmp, get_unmarked(next));
+        atomic_fetch_add(&deleted, 1);
         return true;
     }
 }
@@ -141,6 +159,7 @@ static uintptr_t elements[MAX_THREADS + 1][N_ELEMENTS];
 static void *insert_thread(void *arg)
 {
     list_t *list = arg;
+
     // Slight changes to test ordering
     for (int i = N_ELEMENTS - 1; i >= 0; i--)
         list_insert(list, (uintptr_t) &elements[tid()][i]);
@@ -151,14 +170,19 @@ static void *insert_thread(void *arg)
 static void *delete_thread(void *arg)
 {
     list_t *list = arg;
-    for (int j = 0; j < 100; j++) {
-        for (int i = N_ELEMENTS - 1; i >= 0; i--) {
-            list_delete(list, (uintptr_t) &elements[tid()-1][i]);
+
+    int deleted = 0;
+    for (int j = 0; j < 1000000; j++) {
+        for (size_t i = 0; i < N_ELEMENTS; i++)
+            deleted += list_delete(list, (uintptr_t) &elements[tid()-1][i]);
+        if (deleted == N_ELEMENTS) {
+            printf("\t\t break at %d\n", j);
+            break;
         }
     }
-
     return NULL;
 }
+
 
 int main() {
     pthread_t thr[N_THREADS];
@@ -172,22 +196,7 @@ int main() {
     for (size_t i = 0; i < N_THREADS; i++)
         pthread_join(thr[i], NULL);
 
+    printf("insert %d delete %ld\n", (N_THREADS >> 1) * N_ELEMENTS, deleted);
 
-    list_node_t *cur = (list_node_t *) atomic_load(&list->head);
-    if (cur->key != 0) {
-        fprintf(stderr, "EXPECTED HEAD, GOT %lu!\n", cur->key);
-        return -1;
-    }
-    if (!cur->next) {
-        fprintf(stderr, "MISSING TAIL!\n");
-        return -1;
-    }
-    cur = (list_node_t *) atomic_load(&cur->next);
-    if (cur->key != UINTPTR_MAX) {
-        fprintf(stderr, "EXPECTED TAIL, GOT %lu!\n", cur->key);
-        return -1;
-    }
-
-    fprintf(stderr, "\nTEST OK!\n");
     return 0;
 }
